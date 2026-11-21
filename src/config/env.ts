@@ -20,7 +20,6 @@ export const env = {
   DATABASE_URL: required('DATABASE_URL'),
   JWT_SECRET: required('JWT_SECRET'),
   PORT,
-  // --- AV3 ---
   REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   // path.resolve + path.join em todo o código: funciona igual no Windows e no Linux
   STORAGE_DIR: path.resolve(process.env.STORAGE_DIR || './storage'),

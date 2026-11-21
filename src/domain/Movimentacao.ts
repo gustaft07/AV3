@@ -8,7 +8,7 @@ export interface MovimentacaoJSON {
   tipo: string;
   ator: string;
   observacao?: string;
-  statusDe?: StatusEquipamento; // AV3: transição estruturada (base das análises de eficiência)
+  statusDe?: StatusEquipamento; //transição estruturada (base das análises de eficiência)
   statusPara?: StatusEquipamento;
 }
 

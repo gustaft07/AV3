@@ -30,7 +30,7 @@ export class Equipamento extends EntidadeBase {
   constructor(dados: {
     id?: string;
     criadoEm?: string;
-    codigoBarras?: string; // AV2: opcional; por padrão é o próprio id (gerado automaticamente)
+    codigoBarras?: string; 
     loteId: string;
     tipo: string;
     estadoFisico: EstadoFisico;
@@ -38,7 +38,7 @@ export class Equipamento extends EntidadeBase {
     historicoEstado?: EquipamentoJSON["historicoEstado"];
   }) {
     super(dados.id, dados.criadoEm);
-    this.codigoBarras = dados.codigoBarras ?? this.id; // AV2: o código de barras é o id do equipamento
+    this.codigoBarras = dados.codigoBarras ?? this.id; 
     this.loteId = dados.loteId;
     this.tipo = dados.tipo;
     this.estadoFisico = dados.estadoFisico;
@@ -74,7 +74,6 @@ export class Equipamento extends EntidadeBase {
     this.status = "desmonte";
   }
 
-  /** Acréscimo da AV2: troca de status para a API. "desmonte" continua usando a regra da AV1. */
   alterarStatus(novoStatus: StatusEquipamento): void {
     if (novoStatus === "desmonte") {
       this.moverParaDesmonte();
