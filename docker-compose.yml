@@ -1,0 +1,76 @@
+# OPCIONAL: o Docker serve para subir o MySQL e o Redis sem instalá-los. Se você já tem MySQL 8 e Redis
+# instalados, ignore este arquivo e ajuste DATABASE_URL e REDIS_URL no .env.
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: greencode
+      MYSQL_DATABASE: greencode
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pgreencode --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # AV3: filas (BullMQ), agendamentos e contadores do rate limit
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Opcional: `docker compose --profile full up -d --build` sobe também a API e o worker.
+  api:
+    profiles: ["full"]
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://root:greencode@db:3306/greencode
+      JWT_SECRET: troque-este-segredo-em-producao
+      PORT: 3000
+      REDIS_URL: redis://redis:6379
+      STORAGE_DIR: /app/storage
+    ports:
+      - "3000:3000"
+    volumes:
+      - reports:/app/storage # API e worker compartilham os relatórios gerados
+
+  worker:
+    profiles: ["full"]
+    build: .
+    command: ["node", "dist/worker.js"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://root:greencode@db:3306/greencode
+      JWT_SECRET: troque-este-segredo-em-producao
+      REDIS_URL: redis://redis:6379
+      STORAGE_DIR: /app/storage
+    volumes:
+      - reports:/app/storage
+
+volumes:
+  mysqldata:
+  redisdata:
+  reports:

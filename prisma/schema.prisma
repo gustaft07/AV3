@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Os valores dos enums são idênticos aos do domínio da AV1 (core/validation.ts e Papel.ts).
+
+enum Papel {
+  admin
+  operador_cadastro
+  gestor_almoxarifado
+  auditor
+}
+
+enum EstadoFisico {
+  novo
+  seminovo
+  usado_bom
+  usado_regular
+  usado_ruim
+  sucata
+}
+
+enum StatusEquipamento {
+  recebido
+  triagem
+  triagem_completa
+  desmonte
+  reciclagem
+  descarte_seguro
+  revenda
+}
+
+// ---------------------------------------------------------------------------------------------
+// Política de exclusão (professor):
+//   SOFT DELETE (campo "ativo")  -> Usuario, Organizacao, Lote   (inativar em cadeia + reativar)
+//   DELETE FÍSICO                -> Equipamento, Contrato (e, via "exclusão definitiva", os demais)
+// A exclusão física é em cascata no próprio banco (onDelete: Cascade).
+// Equipamentos NÃO têm soft delete: ficam inativos por herança quando o lote/organização está inativo.
+// ---------------------------------------------------------------------------------------------
+
+model Usuario {
+  id        String   @id @default(uuid())
+  criadoEm  DateTime @default(now())
+  login     String   @unique
+  hashSenha String
+  saltSenha String
+  papel     Papel
+  ativo     Boolean  @default(true) // soft delete
+  versao    Int      @default(1)
+}
+
+model Organizacao {
+  id                     String    @id @default(uuid())
+  criadoEm               DateTime  @default(now())
+  codigo                 String    @unique
+  razaoSocial            String    @db.VarChar(255)
+  cnpj                   String    @unique // somente os 14 dígitos
+  prazoArmazenamentoDias Int       @default(90)
+  ativo                  Boolean   @default(true) // soft delete (inativar propaga para os lotes)
+  contrato               Contrato? // 1 : 0..1
+  lotes                  Lote[]
+  apiKeys                ApiKey[]
+  versao                 Int       @default(1)
+}
+
+// Na AV1 o contrato era o texto "contratoColeta". Só existe exclusão física; portanto
+// "contrato ativo" = contrato existente (não há contrato "inativo").
+model Contrato {
+  id            String      @id @default(uuid())
+  criadoEm      DateTime    @default(now())
+  numero        String      @unique // = contratoColeta da AV1
+  organizacaoId String      @unique // @unique garante o relacionamento 1 : 0..1
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+}
+
+model Lote {
+  id             String            @id @default(uuid())
+  criadoEm       DateTime          @default(now())
+  codigoLote     String            @unique
+  notaFiscal     String
+  transportadora String
+  dataEntrada    DateTime
+  // Derivado dos equipamentos: só muda quando TODOS compartilham o mesmo status (nunca é editado à mão).
+  status         StatusEquipamento @default(recebido)
+  ativo          Boolean           @default(true) // soft delete
+  organizacaoId  String
+  organizacao    Organizacao       @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+  equipamentos   Equipamento[]
+  versao         Int               @default(1)
+
+  @@index([organizacaoId])
+  @@index([dataEntrada])
+}
+
+model Equipamento {
+  id                  String            @id @default(uuid())
+  criadoEm            DateTime          @default(now())
+  // Gerado pelo sistema e SEMPRE igual ao id (constraint em constraints.sql). Mantido como coluna
+  // própria porque o enunciado pede unicidade em "codigoBarrasInterno".
+  codigoBarrasInterno String            @unique
+  // Posição no lote: sequencial automática (1, 2, 3...), atribuída ao cadastrar. Não é reaproveitada.
+  posicao             Int
+  tipo                String
+  // AV3: necessários para a análise de rentabilidade (opcionais: não quebram o cadastro da AV2)
+  marca               String?           @db.VarChar(100)
+  modelo              String?           @db.VarChar(100)
+  estadoFisico        EstadoFisico
+  status              StatusEquipamento @default(recebido)
+  loteId              String
+  lote                Lote              @relation(fields: [loteId], references: [id], onDelete: Cascade)
+  historicoEstado     HistoricoEstado[]
+  movimentacoes       Movimentacao[]
+  versao              Int               @default(1)
+
+  @@unique([loteId, posicao])
+  @@index([status])
+  @@index([estadoFisico])
+  @@index([tipo, marca, modelo])
+}
+
+// Na AV1 era um array dentro do equipamento (historicoEstado); normalizado em tabela própria.
+model HistoricoEstado {
+  id            String       @id @default(uuid())
+  equipamentoId String
+  equipamento   Equipamento  @relation(fields: [equipamentoId], references: [id], onDelete: Cascade)
+  de            EstadoFisico
+  para          EstadoFisico
+  justificativa String?      @db.VarChar(500)
+  em            DateTime     @default(now())
+
+  @@index([equipamentoId, em])
+}
+
+model Movimentacao {
+  id            String      @id @default(uuid())
+  criadoEm      DateTime    @default(now())
+  equipamentoId String
+  equipamento   Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Cascade)
+  tipo          String // cadastro | alteracao_estado_fisico | alteracao_status
+  ator          String // login de quem executou (como na AV1)
+  observacao    String?     @db.VarChar(1000)
+  // AV3: transição de status estruturada (null no cadastro de estado físico e em registros anteriores à AV3)
+  statusDe      StatusEquipamento?
+  statusPara    StatusEquipamento?
+
+  @@index([equipamentoId, criadoEm])
+  @@index([statusPara, criadoEm])
+}
+
+// =====================================================================================
+// AV3 — API PÚBLICA (chaves de API, escopos e limites por parceiro)
+// =====================================================================================
+enum EscopoApi {
+  rastreabilidade_read
+  lotes_read
+  lotes_write
+  relatorios_read
+}
+
+model ApiKey {
+  id                 String            @id @default(uuid())
+  criadoEm           DateTime          @default(now())
+  nome               String            @db.VarChar(120)
+  prefixo            String            @unique @db.VarChar(16) // gc_live_xxxxxxxx: identifica a chave sem expô-la
+  hashChave          String            @unique @db.Char(64) // SHA-256 da chave completa (a chave nunca é guardada)
+  organizacaoId      String
+  organizacao        Organizacao       @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+  escopos            ApiKeyEscopo[]
+  limiteReqPorMinuto Int               @default(60)
+  ativa              Boolean           @default(true)
+  expiraEm           DateTime?
+  revogadaEm         DateTime?
+  ultimoUsoEm        DateTime?
+  webhookUrl         String?           @db.VarChar(500)
+  webhookSegredo     String?           @db.VarChar(100)
+  tarefas            TarefaRelatorio[]
+
+  @@index([organizacaoId])
+}
+
+model ApiKeyEscopo {
+  apiKeyId String
+  escopo   EscopoApi
+  apiKey   ApiKey    @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@id([apiKeyId, escopo])
+}
+
+// =====================================================================================
+// AV3 — CAMADA ANALÍTICA (cada rodada é uma "execução"; resultados ficam por execução = histórico)
+// =====================================================================================
+enum TipoAnalise {
+  eficiencia_operacional
+  rentabilidade
+  vida_util
+}
+
+enum OrigemExecucao {
+  agendada
+  manual
+  api
+}
+
+enum StatusExecucao {
+  processando
+  concluida
+  falhou
+}
+
+enum DimensaoEficiencia {
+  geral
+  operador
+  mes
+  trimestre
+  etapa
+}
+
+enum MetodoPrevisao {
+  ols
+  holt
+}
+
+model AnaliseExecucao {
+  id            String                   @id @default(uuid())
+  tipo          TipoAnalise
+  origem        OrigemExecucao
+  status        StatusExecucao           @default(processando)
+  versaoModelo  String                   @db.VarChar(20)
+  parametros    Json?
+  avisos        Json?
+  organizacaoId String? // null = visão global; preenchido = recorte de um parceiro
+  iniciadaEm    DateTime                 @default(now())
+  concluidaEm   DateTime?
+  erro          String?                  @db.VarChar(1000)
+  eficiencia    ResultadoEficiencia[]
+  rentabilidade ResultadoRentabilidade[]
+  previsoes     PrevisaoVidaUtil[]
+
+  @@index([tipo, iniciadaEm])
+  @@index([organizacaoId])
+}
+
+model ResultadoEficiencia {
+  id           String             @id @default(uuid())
+  execucaoId   String
+  execucao     AnaliseExecucao    @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+  dimensao     DimensaoEficiencia
+  chave        String             @db.VarChar(100) // 'geral' | login do operador | '2026-03' | '2026-Q1' | status
+  amostras     Int
+  mediaHoras   Float
+  medianaHoras Float
+  desvioHoras  Float
+  p90Horas     Float
+  gargalo      Boolean            @default(false)
+
+  @@index([execucaoId, dimensao])
+}
+
+model ResultadoRentabilidade {
+  id           String          @id @default(uuid())
+  execucaoId   String
+  execucao     AnaliseExecucao @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+  tipo         String
+  marca        String          @default("")
+  modelo       String          @default("")
+  estadoFisico EstadoFisico? // null = consolidado de todos os estados
+  amostras     Int
+  valorMedio   Decimal         @db.Decimal(12, 2)
+  desvio       Decimal         @db.Decimal(12, 2)
+  valorTotal   Decimal         @db.Decimal(14, 2)
+
+  @@index([execucaoId, tipo])
+}
+
+// Tabela de preços de referência mantida pelo admin (valores em minúsculas, "" = qualquer marca/modelo).
+model ValorReferenciaRecuperacao {
+  id           String       @id @default(uuid())
+  tipo         String
+  marca        String       @default("")
+  modelo       String       @default("")
+  estadoFisico EstadoFisico
+  valor        Decimal      @db.Decimal(12, 2)
+  atualizadoEm DateTime     @updatedAt
+
+  @@unique([tipo, marca, modelo, estadoFisico])
+}
+
+model PrevisaoVidaUtil {
+  id                   String             @id @default(uuid())
+  execucaoId           String
+  execucao             AnaliseExecucao    @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+  tipo                 String
+  metodo               MetodoPrevisao
+  limiar               Float // nota abaixo da qual o equipamento é considerado inservível
+  amostras             Int
+  inclinacao           Float // nota/dia; previsão(x) = inclinacao * idadeDias + intercepto
+  intercepto           Float
+  r2                   Float
+  vidaRestanteDias     Float?
+  inservivelPrevistoEm DateTime?
+  recomendada          Boolean            @default(false) // método com menor erro histórico para este tipo
+  avaliacao            AvaliacaoPrevisao?
+
+  @@index([tipo, execucaoId])
+}
+
+// Comparação previsão x realizado: erro do modelo sobre observações posteriores à previsão.
+model AvaliacaoPrevisao {
+  id              String           @id @default(uuid())
+  previsaoId      String           @unique
+  previsao        PrevisaoVidaUtil @relation(fields: [previsaoId], references: [id], onDelete: Cascade)
+  amostrasFuturas Int
+  maeScore        Float
+  viesScore       Float
+  avaliadaEm      DateTime         @default(now())
+}
+
+// =====================================================================================
+// AV3 — TAREFAS ASSÍNCRONAS (id da tarefa = jobId do BullMQ)
+// =====================================================================================
+enum StatusTarefa {
+  aguardando
+  processando
+  concluida
+  falhou
+}
+
+enum FormatoRelatorio {
+  csv
+  json
+}
+
+model TarefaRelatorio {
+  id            String           @id @default(uuid())
+  criadoEm      DateTime         @default(now())
+  apiKeyId      String?
+  apiKey        ApiKey?          @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  organizacaoId String
+  tipo          TipoAnalise
+  formato       FormatoRelatorio @default(json)
+  parametros    Json?
+  status        StatusTarefa     @default(aguardando)
+  tentativas    Int              @default(0)
+  erro          String?          @db.VarChar(1000)
+  arquivo       String?          @db.VarChar(300) // caminho relativo a STORAGE_DIR
+  concluidaEm   DateTime?
+  expiraEm      DateTime?
+
+  @@index([organizacaoId, criadoEm])
+  @@index([status])
+}

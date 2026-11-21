@@ -1,0 +1,48 @@
+{
+  "name": "greencode",
+  "version": "3.0.0",
+  "description": "greencode - API de logística reversa de eletrônicos (AV3: camada analítica, API pública e filas)",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "tsx --test tests/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "seed": "prisma db seed",
+    "db:constraints": "node scripts/anexar-constraints.js",
+    "worker": "tsx watch src/worker.ts",
+    "start:worker": "node dist/worker.js",
+    "seed:av3": "tsx prisma/seed-av3.ts",
+    "db:constraints-av3": "node scripts/anexar-constraints.js av3_analitica constraints-av3.sql",
+    "db:backfill-av3": "prisma db execute --file prisma/backfill-av3.sql --schema prisma/schema.prisma"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/jwt": "^9.0.0",
+    "@fastify/rate-limit": "^10.2.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
+    "@prisma/client": "^6.0.0",
+    "bullmq": "^5.40.0",
+    "csv-stringify": "^6.5.2",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.0.0",
+    "fastify-plugin": "^5.0.0",
+    "ioredis": "^5.4.2",
+    "simple-statistics": "^7.8.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

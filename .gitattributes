@@ -1,0 +1,4 @@
+# Mesmo fim de linha no Windows e no Linux (evita "^M" em scripts e diffs enormes)
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
